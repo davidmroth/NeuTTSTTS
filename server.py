@@ -14,9 +14,12 @@ app = FastAPI(title="NeuTTS Air")
 backbone_device = os.getenv("NEUTTS_BACKBONE_DEVICE", "cpu")
 default_ref_audio = Path("/app/samples/jo.wav")
 default_ref_text = Path("/app/samples/jo.txt")
+default_ref_text_value = default_ref_text.read_text(encoding="utf-8").strip()
 
 tts = None
 tts_lock = threading.Lock()
+default_ref_codes = None
+default_ref_lock = threading.Lock()
 
 
 def _get_tts():
@@ -40,6 +43,16 @@ def _generate_with_reference(text: str, ref_audio_path: Path, ref_text: str):
     model = _get_tts()
     ref_codes = model.encode_reference(str(ref_audio_path))
     return model.infer(text, ref_codes, ref_text)
+
+
+def _generate_with_default_reference(text: str):
+    global default_ref_codes
+    model = _get_tts()
+    if default_ref_codes is None:
+        with default_ref_lock:
+            if default_ref_codes is None:
+                default_ref_codes = model.encode_reference(str(default_ref_audio))
+    return model.infer(text, default_ref_codes, default_ref_text_value)
 
 
 @app.get("/health")
@@ -71,11 +84,7 @@ async def tts_endpoint(
             await ref_audio.close()
             temp_path.unlink(missing_ok=True)
     else:
-        audio = _generate_with_reference(
-            text,
-            default_ref_audio,
-            default_ref_text.read_text(encoding="utf-8").strip(),
-        )
+        audio = _generate_with_default_reference(text)
 
     buf = io.BytesIO()
     sf.write(buf, audio, 24000, format="WAV")
